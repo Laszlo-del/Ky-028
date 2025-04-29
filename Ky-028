@@ -1,0 +1,63 @@
+import requests
+import time
+from gpiozero import PWMLED
+import spidev
+
+# LED-ek beállítása
+green_led = PWMLED(20)  # Zöld LED a GPIO 20 pinhez
+red_led = PWMLED(21)    # Piros LED a GPIO 21 pinhez
+
+# ThingSpeak API kulcs
+API_KEY = 'HX1HIJ1Y9Q6CMGTV'
+
+# MCP3008 beállítása
+spi = spidev.SpiDev()
+spi.open(0, 0)  # Bus 0, CE0
+spi.max_speed_hz = 1350000
+
+# ADC olvasás függvény
+def read_adc(channel):
+    adc = spi.xfer2([1, (8 + channel) << 4, 0])
+    data = ((adc[1] & 3) << 8) + adc[2]
+    return data
+
+# Átalakítás "hőmérséklet" becslésre (csak durva példa!)
+def adc_to_temperature(adc_value):
+    voltage = (adc_value * 3.3) / 1023  # 10 bites ADC, 3.3V referencia
+    # Egyszerű lineáris közelítés, nem pontos!
+    temperature = (voltage - 0.5) * 100  # Példa: 0.5V → 0°C, 1.0V → 50°C
+    return round(temperature, 2)
+
+# Adatok küldése
+def send_data_to_thingspeak(temp):
+    url = f'http://localhost/sensor/insert_data.php?temperature={temp}'
+    try:
+        response = requests.get(url)
+        if response.status_code == 200:
+            print(f"Sikeres adatküldés: Hőmérséklet={temp}")
+        else:
+            print(f"Sikertelen adatküldés: {response.status_code}")
+    except Exception as e:
+        print(f"Hiba az adatküldés közben: {e}")
+
+# Fő ciklus
+try:
+    while True:
+        adc_value = read_adc(0)  # CH0 bemenet, ha ide van kötve a KY-028 A0 lába
+        temperature = adc_to_temperature(adc_value)
+
+        print(f"Hőmérséklet (becsült): {temperature:.2f} °C")
+
+        if temperature > 20:
+            red_led.value = 1
+            green_led.value = 0
+        else:
+            red_led.value = 0
+            green_led.value = 1
+
+        send_data_to_thingspeak(temperature)
+        time.sleep(10)
+
+except KeyboardInterrupt:
+    spi.close()
+    print("Program leállítva.")
